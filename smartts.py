@@ -56,10 +56,12 @@ class AudioController:
         if key_code != 269025093:  # Key.f9:
             return
         if self.reading_thread.is_alive():
+            print("Stopping audio")
             self.stop_audio_event.set()
             self.reading_thread.join()
             self.stop_audio_event.clear()
         else:
+            print("Starting audio")
             self.reading_thread = self.start_reading(self.stop_audio_event)
 
     def start_reading(self, stop_audio_event: Event) -> threading.Thread:
