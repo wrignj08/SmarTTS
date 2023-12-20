@@ -6,6 +6,7 @@ from pynput.keyboard import Key, KeyCode, Listener
 import pyperclip
 import platform
 import pyautogui
+import emoji
 
 from audio_helpers import async_audio_generation
 
@@ -72,7 +73,11 @@ class AudioController:
             The thread that was started for reading.
         """
         selected_text = copy_selected_text()
-        print(f"Captured text: {selected_text}")
+        # convert emojis to text
+        selected_text = emoji.demojize(selected_text)
+        selected_text = selected_text.replace(":", "")
+
+        # print(f"Captured text: {selected_text}")
         reading_thread = threading.Thread(
             target=async_audio_generation,
             args=(selected_text, 2.0, stop_audio_event),

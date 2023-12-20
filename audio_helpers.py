@@ -89,7 +89,7 @@ def async_audio_generation(text: str, speed_factor: float, stop_event: Event) ->
         stop_event: An event to signal stopping the audio generation.
     """
     text_chunks = sent_tokenize(text)
-    progress_bar = tqdm(total=len(text_chunks), desc="Playing audio", leave=False)
+    progress_bar = tqdm(total=len(text_chunks), desc="Playing audio")
 
     with futures.ThreadPoolExecutor(max_workers=2) as audio_gen_executor:
         # Store futures with their index and associated text chunk
