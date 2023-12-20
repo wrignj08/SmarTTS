@@ -13,7 +13,7 @@ from threading import Event
 import time
 
 
-def openai_tts(text: str, audio_file_path: str) -> None:
+def openai_tts(text: str, audio_file_path: str, hd=True) -> None:
     """
     Generates speech from text using OpenAI's TTS and saves it to a file.
 
@@ -21,10 +21,14 @@ def openai_tts(text: str, audio_file_path: str) -> None:
         text: The text to be converted to speech.
         audio_file_path: The file path where the audio will be saved.
     """
+    if hd:
+        model = "tts-1-hd"
+    else:
+        model = "tts-1"
     client = OpenAI()
     # Generate speech
     response = client.audio.speech.create(
-        model="tts-1",
+        model=model,
         voice="alloy",
         input=text,
     )
@@ -45,7 +49,7 @@ def adjust_audio_speed(speed_factor: float, audio_file: str) -> None:
     sf.write(audio_file, y_stretched, sr, format="wav")
 
 
-def create_audio_segment(text_chunk: str, speed_factor: float) -> WaveObject:
+def create_audio_segment(text_chunk: str, speed_factor: float, use_hd) -> WaveObject:
     """
     Creates an audio segment from a text chunk with adjusted speed.
 
@@ -61,7 +65,7 @@ def create_audio_segment(text_chunk: str, speed_factor: float) -> WaveObject:
     ) as temp_file:
         audio_file_path = temp_file.name
 
-        openai_tts(text_chunk, audio_file_path)
+        openai_tts(text_chunk, audio_file_path, use_hd)
 
         audio_segment = AudioSegment.from_file(str(audio_file_path))
 
@@ -95,7 +99,9 @@ def async_audio_generation(text: str, speed_factor: float, stop_event: Event) ->
         # Store futures with their index and associated text chunk
         indexed_futures = {
             index: (
-                audio_gen_executor.submit(create_audio_segment, chunk, speed_factor),
+                audio_gen_executor.submit(
+                    create_audio_segment, chunk, speed_factor, index == 0
+                ),
                 chunk,
             )
             for index, chunk in enumerate(text_chunks)
