@@ -1,18 +1,18 @@
 import tempfile
-from openai import OpenAI
-import soundfile as sf
-import simpleaudio as sa
-from simpleaudio import WaveObject
-from nltk.tokenize import sent_tokenize
+import time
 from concurrent import futures
-from sympy import use
-from tqdm.auto import tqdm
+from threading import Event
+from typing import Literal
+
 import librosa
 import pyrubberband
+import simpleaudio as sa
+import soundfile as sf
+from nltk.tokenize import sent_tokenize
+from openai import OpenAI
 from pydub import AudioSegment
-from threading import Event
-import time
-from typing import Literal
+from simpleaudio import WaveObject
+from tqdm.auto import tqdm
 
 
 def openai_tts(

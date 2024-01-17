@@ -1,12 +1,13 @@
-from threading import Event
+import platform
 import threading
 import time
+from threading import Event
 from typing import Union
-from pynput.keyboard import Key, KeyCode, Listener
-import pyperclip
-import platform
-import pyautogui
+
 import emoji
+import pyautogui
+import pyperclip
+from pynput.keyboard import Key, KeyCode, Listener
 
 from audio_helpers import async_audio_generation
 
