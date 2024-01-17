@@ -5,15 +5,22 @@ import simpleaudio as sa
 from simpleaudio import WaveObject
 from nltk.tokenize import sent_tokenize
 from concurrent import futures
+from sympy import use
 from tqdm.auto import tqdm
 import librosa
 import pyrubberband
 from pydub import AudioSegment
 from threading import Event
 import time
+from typing import Literal
 
 
-def openai_tts(text: str, audio_file_path: str, hd=True) -> None:
+def openai_tts(
+    text: str,
+    audio_file_path: str,
+    use_hd=True,
+    speaker: Literal["alloy", "echo", "fable", "onyx", "nova", "shimmer"] = "alloy",
+) -> None:
     """
     Generates speech from text using OpenAI's TTS and saves it to a file.
 
@@ -21,7 +28,7 @@ def openai_tts(text: str, audio_file_path: str, hd=True) -> None:
         text: The text to be converted to speech.
         audio_file_path: The file path where the audio will be saved.
     """
-    if hd:
+    if use_hd:
         model = "tts-1-hd"
     else:
         model = "tts-1"
@@ -29,7 +36,7 @@ def openai_tts(text: str, audio_file_path: str, hd=True) -> None:
     # Generate speech
     response = client.audio.speech.create(
         model=model,
-        voice="alloy",
+        voice=speaker,
         input=text,
     )
 
@@ -49,7 +56,12 @@ def adjust_audio_speed(speed_factor: float, audio_file: str) -> None:
     sf.write(audio_file, y_stretched, sr, format="wav")
 
 
-def create_audio_segment(text_chunk: str, speed_factor: float, use_hd) -> WaveObject:
+def create_audio_segment(
+    text_chunk: str,
+    speed_factor: float,
+    use_hd: bool,
+    speaker: Literal["alloy", "echo", "fable", "onyx", "nova", "shimmer"] = "alloy",
+) -> WaveObject:
     """
     Creates an audio segment from a text chunk with adjusted speed.
 
@@ -65,7 +77,7 @@ def create_audio_segment(text_chunk: str, speed_factor: float, use_hd) -> WaveOb
     ) as temp_file:
         audio_file_path = temp_file.name
 
-        openai_tts(text_chunk, audio_file_path, use_hd)
+        openai_tts(text_chunk, audio_file_path, use_hd, speaker)
 
         audio_segment = AudioSegment.from_file(str(audio_file_path))
 
@@ -83,7 +95,12 @@ def create_audio_segment(text_chunk: str, speed_factor: float, use_hd) -> WaveOb
         return wave_obj
 
 
-def async_audio_generation(text: str, speed_factor: float, stop_event: Event) -> None:
+def async_audio_generation(
+    text: str,
+    speed_factor: float,
+    stop_event: Event,
+    speaker: Literal["alloy", "echo", "fable", "onyx", "nova", "shimmer"] = "alloy",
+) -> None:
     """
     Asynchronously generates and plays audio from text.
 
@@ -100,7 +117,7 @@ def async_audio_generation(text: str, speed_factor: float, stop_event: Event) ->
         indexed_futures = {
             index: (
                 audio_gen_executor.submit(
-                    create_audio_segment, chunk, speed_factor, index == 0
+                    create_audio_segment, chunk, speed_factor, False, speaker
                 ),
                 chunk,
             )

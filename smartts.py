@@ -82,7 +82,7 @@ class AudioController:
         # print(f"Captured text: {selected_text}")
         reading_thread = threading.Thread(
             target=async_audio_generation,
-            args=(selected_text, 2.0, stop_audio_event),
+            args=(selected_text, 2.0, stop_audio_event, "echo"),
         )
         reading_thread.start()
         return reading_thread
