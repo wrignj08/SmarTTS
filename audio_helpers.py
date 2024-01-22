@@ -1,9 +1,11 @@
+import asyncio
 import tempfile
 import time
 from concurrent import futures
 from threading import Event
 from typing import Literal
 
+import edge_tts
 import librosa
 import pyrubberband
 import simpleaudio as sa
@@ -15,11 +17,11 @@ from simpleaudio import WaveObject
 from tqdm.auto import tqdm
 
 
-def openai_tts(
+def tts_openai(
     text: str,
+    speaker: str,
+    use_hd: bool,
     audio_file_path: str,
-    use_hd=True,
-    speaker: Literal["alloy", "echo", "fable", "onyx", "nova", "shimmer"] = "alloy",
 ) -> None:
     """
     Generates speech from text using OpenAI's TTS and saves it to a file.
@@ -36,11 +38,34 @@ def openai_tts(
     # Generate speech
     response = client.audio.speech.create(
         model=model,
-        voice=speaker,
+        voice=speaker,  # type: ignore
         input=text,
     )
 
     response.stream_to_file(audio_file_path)
+
+
+async def edge_tts_worker(text: str, speaker: str, output_file_path: str):
+    communicate = edge_tts.Communicate(text, speaker)
+    with open(output_file_path, "wb") as file:
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                file.write(chunk["data"])
+
+
+async def tts_edge(
+    text: str,
+    speaker: str,
+    output_file_path: str,
+):
+    loop = asyncio.get_event_loop()
+    if loop.is_running():
+        # If the loop is running, create a new task and await its completion
+        task = loop.create_task(edge_tts_worker(text, speaker, output_file_path))
+        await task
+    else:
+        # If the loop is not running, use run_until_complete
+        loop.run_until_complete(edge_tts_worker(text, speaker, output_file_path))
 
 
 def adjust_audio_speed(speed_factor: float, audio_file: str) -> None:
@@ -60,7 +85,8 @@ def create_audio_segment(
     text_chunk: str,
     speed_factor: float,
     use_hd: bool,
-    speaker: Literal["alloy", "echo", "fable", "onyx", "nova", "shimmer"] = "alloy",
+    speaker: str,
+    tts_provider: Literal["openai", "edge"] = "edge",
 ) -> WaveObject:
     """
     Creates an audio segment from a text chunk with adjusted speed.
@@ -77,7 +103,11 @@ def create_audio_segment(
     ) as temp_file:
         audio_file_path = temp_file.name
 
-        openai_tts(text_chunk, audio_file_path, use_hd, speaker)
+        if tts_provider == "edge":
+            asyncio.run(tts_edge(text_chunk, speaker, audio_file_path))
+
+        else:
+            tts_openai(text_chunk, speaker, use_hd, audio_file_path)
 
         audio_segment = AudioSegment.from_file(str(audio_file_path))
 
@@ -96,10 +126,11 @@ def create_audio_segment(
 
 
 def async_audio_generation(
-    text: str,
-    speed_factor: float,
     stop_event: Event,
+    text: str,
+    tts_provider: Literal["openai", "edge"] = "edge",
     speaker: Literal["alloy", "echo", "fable", "onyx", "nova", "shimmer"] = "alloy",
+    speed_factor: float = 1,
 ) -> None:
     """
     Asynchronously generates and plays audio from text.
@@ -117,7 +148,12 @@ def async_audio_generation(
         indexed_futures = {
             index: (
                 audio_gen_executor.submit(
-                    create_audio_segment, chunk, speed_factor, False, speaker
+                    create_audio_segment,
+                    chunk,
+                    speed_factor,
+                    False,
+                    speaker,
+                    tts_provider,
                 ),
                 chunk,
             )

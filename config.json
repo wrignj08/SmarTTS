@@ -1,0 +1,5 @@
+{
+    "speed": 1.5,
+    "tts_provider": "edge",
+    "speaker": "en-GB-SoniaNeural"
+}

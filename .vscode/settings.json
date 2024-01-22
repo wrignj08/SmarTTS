@@ -1,9 +1,14 @@
 {
     "cSpell.words": [
+        "librosa",
         "openai",
         "pyautogui",
+        "pydub",
         "pynput",
         "pyperclip",
+        "pyrubberband",
+        "simpleaudio",
+        "soundfile",
         "tqdm"
     ]
 }
