@@ -1,5 +1,4 @@
 import json
-import platform
 import threading
 import time
 from pathlib import Path
@@ -22,21 +21,21 @@ def copy_selected_text() -> str:
     Returns:
         The text copied to the clipboard.
     """
-    os_name = platform.system()
+    current_clipboard = pyperclip.paste()
     pyperclip.copy("")
     time.sleep(0.03)
     # Determine the key combination based on the OS
-    if os_name == "Darwin":  # macOS
-        pyautogui.hotkey("command", "c")
-    else:  # Windows and Linux
-        pyautogui.hotkey("ctrl", "c")
+    pyautogui.hotkey("ctrl", "c", interval=0.1)
 
-    time.sleep(0.3)
+    # time.sleep(0.3)
     for i in range(2):
         clip_board = pyperclip.paste()
         if clip_board != "":
+            # refill the clipboard with the original content
+            pyperclip.copy(current_clipboard)
             return clip_board
         time.sleep(0.1)
+    pyperclip.copy(current_clipboard)
     return ""
 
 
@@ -130,12 +129,12 @@ class AudioController:
         if key_code != 269025093:  # Key.f9:
             return
         if self.reading_thread.is_alive():
-            print("Stopping audio")
+            # print("Stopping audio")
             self.stop_audio_event.set()
             self.reading_thread.join()
             self.stop_audio_event.clear()
         else:
-            print("Starting audio")
+            # print("Starting audio")
             self.reading_thread = self.start_reading(self.stop_audio_event)
 
     def start_reading(self, stop_audio_event: Event) -> threading.Thread:

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import tempfile
 import time
 from concurrent import futures
@@ -7,6 +8,7 @@ from typing import Literal
 
 import edge_tts
 import librosa
+import openai
 import pyrubberband
 import simpleaudio as sa
 import soundfile as sf
@@ -36,21 +38,49 @@ def tts_openai(
         model = "tts-1"
     client = OpenAI()
     # Generate speech
-    response = client.audio.speech.create(
-        model=model,
-        voice=speaker,  # type: ignore
-        input=text,
-    )
-
-    response.stream_to_file(audio_file_path)
+    try:
+        response = client.audio.speech.create(
+            model=model,
+            voice=speaker,  # type: ignore
+            input=text,
+        )
+        response.stream_to_file(audio_file_path)
+    except openai.RateLimitError as e:
+        # This is a placeholder for OpenAI's specific error class; replace with the actual one
+        logging.error(f"OpenAI TTS error: {e}")
+        return
+        # Here you can handle specific OpenAI errors differently
+    except Exception as e:
+        logging.error(f"Unexpected error in TTS processing: {e}")
+        # This catches any other exceptions not specifically handled above
 
 
 async def edge_tts_worker(text: str, speaker: str, output_file_path: str):
+    attempts = 2  # Allows for the initial try and one retry
     communicate = edge_tts.Communicate(text, speaker)
-    with open(output_file_path, "wb") as file:
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                file.write(chunk["data"])
+    while attempts > 0:
+        try:
+            with open(output_file_path, "wb") as file:
+                async for chunk in communicate.stream():
+                    if chunk["type"] == "audio":
+                        file.write(chunk["data"])
+            break  # Exit the loop if the operation is successful
+        except asyncio.TimeoutError:
+            attempts -= 1  # Decrement the number of attempts left
+            if attempts == 0:
+                logging.error(
+                    "Failed to complete the operation after a retry. A timeout occurred."
+                )
+            else:
+                logging.info("Timeout occurred, retrying...")
+        except Exception as e:
+            logging.error(f"An unexpected error occurred: {e}")
+            break  # Exit the loop if a non-timeout error occurs
+
+    if attempts == 0:
+        logging.error(
+            "Failed to complete the operation after a retry. A timeout occurred."
+        )
 
 
 async def tts_edge(
@@ -143,7 +173,7 @@ def async_audio_generation(
     text_chunks = sent_tokenize(text)
     progress_bar = tqdm(total=len(text_chunks), desc="Playing audio")
 
-    with futures.ThreadPoolExecutor(max_workers=2) as audio_gen_executor:
+    with futures.ThreadPoolExecutor(max_workers=1) as audio_gen_executor:
         # Store futures with their index and associated text chunk
         indexed_futures = {
             index: (
