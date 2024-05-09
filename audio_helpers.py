@@ -2,6 +2,7 @@ import asyncio
 import logging
 import tempfile
 import time
+from collections import deque
 from concurrent import futures
 from threading import Event
 from typing import Literal
@@ -17,6 +18,23 @@ from openai import OpenAI
 from pydub import AudioSegment
 from simpleaudio import WaveObject
 from tqdm.auto import tqdm
+
+
+class AudioCache:
+    def __init__(self, max_size: int):
+        self.cache = deque(maxlen=max_size)
+
+    def get(self, text: str):
+        for cached_text, audio_file_path in self.cache:
+            if cached_text == text:
+                return audio_file_path
+        return None
+
+    def add(self, text: str, audio_file_path: str):
+        self.cache.append((text, audio_file_path))
+
+
+audio_cache = AudioCache(max_size=20)
 
 
 def tts_openai(
@@ -128,6 +146,10 @@ def create_audio_segment(
     Returns:
         A WaveObject representing the audio segment.
     """
+    cached_audio_path = audio_cache.get(text_chunk)
+    if cached_audio_path:
+        print("Using cached audio")
+        audio_file_path = cached_audio_path
     with tempfile.NamedTemporaryFile(
         delete=False, suffix=".mp3", mode="wb"
     ) as temp_file:
@@ -138,6 +160,8 @@ def create_audio_segment(
 
         else:
             tts_openai(text_chunk, speaker, use_hd, audio_file_path)
+
+        audio_cache.add(text_chunk, audio_file_path)
 
         audio_segment = AudioSegment.from_file(str(audio_file_path))
 
