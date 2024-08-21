@@ -1,119 +1,59 @@
-import asyncio
-import logging
 import tempfile
-import time
 from collections import deque
 from concurrent import futures
 from threading import Event
 from typing import Literal
 
-import edge_tts
 import librosa
-import openai
 import pyrubberband
 import simpleaudio as sa
 import soundfile as sf
 from nltk.tokenize import sent_tokenize
-from openai import OpenAI
 from pydub import AudioSegment
 from simpleaudio import WaveObject
 from tqdm.auto import tqdm
+from piper import PiperVoice
+import wave
 
 
 class AudioCache:
     def __init__(self, max_size: int):
         self.cache = deque(maxlen=max_size)
 
-    def get(self, text: str):
-        for cached_text, audio_file_path in self.cache:
-            if cached_text == text:
+    def get(self, text: str, speed_factor: float):
+        for cached_text, cached_speed, audio_file_path in self.cache:
+            if cached_text == text and cached_speed == speed_factor:
+                print("Hit cache")
                 return audio_file_path
         return None
 
-    def add(self, text: str, audio_file_path: str):
-        self.cache.append((text, audio_file_path))
+    def add(self, text: str, speed_factor: float, audio_file_path: str):
+        self.cache.append((text, speed_factor, audio_file_path))
 
 
 audio_cache = AudioCache(max_size=20)
 
 
-def tts_openai(
+def tts_piper(
     text: str,
     speaker: str,
-    use_hd: bool,
     audio_file_path: str,
+    speed_factor: float = 1,
 ) -> None:
-    """
-    Generates speech from text using OpenAI's TTS and saves it to a file.
+    with wave.open(audio_file_path, "wb") as wav_file:
+        # Set the WAV file parameters
+        voice = PiperVoice.load(speaker)
+        wav_file.setnchannels(1)  # mono
+        wav_file.setsampwidth(2)  # 16-bit
+        wav_file.setframerate(voice.config.sample_rate)  # Use the model's sample rate
 
-    Args:
-        text: The text to be converted to speech.
-        audio_file_path: The file path where the audio will be saved.
-    """
-    if use_hd:
-        model = "tts-1-hd"
-    else:
-        model = "tts-1"
-    client = OpenAI()
-    # Generate speech
-    try:
-        response = client.audio.speech.create(
-            model=model,
-            voice=speaker,  # type: ignore
-            input=text,
+        # Generate audio
+        voice.synthesize(
+            text=text,
+            wav_file=wav_file,
+            length_scale=1.0 / speed_factor,
+            sentence_silence=0.3,
         )
-        response.stream_to_file(audio_file_path)
-    except openai.RateLimitError as e:
-        # This is a placeholder for OpenAI's specific error class; replace with the actual one
-        logging.error(f"OpenAI TTS error: {e}")
-        return
-        # Here you can handle specific OpenAI errors differently
-    except Exception as e:
-        logging.error(f"Unexpected error in TTS processing: {e}")
-        # This catches any other exceptions not specifically handled above
-
-
-async def edge_tts_worker(text: str, speaker: str, output_file_path: str):
-    attempts = 2  # Allows for the initial try and one retry
-    communicate = edge_tts.Communicate(text, speaker)
-    while attempts > 0:
-        try:
-            with open(output_file_path, "wb") as file:
-                async for chunk in communicate.stream():
-                    if chunk["type"] == "audio":
-                        file.write(chunk["data"])
-            break  # Exit the loop if the operation is successful
-        except asyncio.TimeoutError:
-            attempts -= 1  # Decrement the number of attempts left
-            if attempts == 0:
-                logging.error(
-                    "Failed to complete the operation after a retry. A timeout occurred."
-                )
-            else:
-                logging.info("Timeout occurred, retrying...")
-        except Exception as e:
-            logging.error(f"An unexpected error occurred: {e}")
-            break  # Exit the loop if a non-timeout error occurs
-
-    if attempts == 0:
-        logging.error(
-            "Failed to complete the operation after a retry. A timeout occurred."
-        )
-
-
-async def tts_edge(
-    text: str,
-    speaker: str,
-    output_file_path: str,
-):
-    loop = asyncio.get_event_loop()
-    if loop.is_running():
-        # If the loop is running, create a new task and await its completion
-        task = loop.create_task(edge_tts_worker(text, speaker, output_file_path))
-        await task
-    else:
-        # If the loop is not running, use run_until_complete
-        loop.run_until_complete(edge_tts_worker(text, speaker, output_file_path))
 
 
 def adjust_audio_speed(speed_factor: float, audio_file: str) -> None:
@@ -132,57 +72,35 @@ def adjust_audio_speed(speed_factor: float, audio_file: str) -> None:
 def create_audio_segment(
     text_chunk: str,
     speed_factor: float,
-    use_hd: bool,
     speaker: str,
-    tts_provider: Literal["openai", "edge"] = "edge",
 ) -> WaveObject:
-    """
-    Creates an audio segment from a text chunk with adjusted speed.
-
-    Args:
-        text_chunk: Text chunk to be converted to audio.
-        speed_factor: Speed adjustment factor.
-
-    Returns:
-        A WaveObject representing the audio segment.
-    """
-    cached_audio_path = audio_cache.get(text_chunk)
+    cached_audio_path = audio_cache.get(text_chunk, speed_factor)
     if cached_audio_path:
-        print("Using cached audio")
         audio_file_path = cached_audio_path
-    with tempfile.NamedTemporaryFile(
-        delete=False, suffix=".mp3", mode="wb"
-    ) as temp_file:
-        audio_file_path = temp_file.name
+    else:
+        with tempfile.NamedTemporaryFile(
+            delete=False, suffix=".wav", mode="wb"
+        ) as temp_file:
+            audio_file_path = temp_file.name
 
-        if tts_provider == "edge":
-            asyncio.run(tts_edge(text_chunk, speaker, audio_file_path))
+            with tempfile.NamedTemporaryFile(
+                delete=False, suffix=".mp3", mode="wb"
+            ) as temp_mp3_file:
+                temp_mp3_file_path = temp_mp3_file.name
+                tts_piper(text_chunk, speaker, temp_mp3_file_path, speed_factor)
 
-        else:
-            tts_openai(text_chunk, speaker, use_hd, audio_file_path)
+                audio_segment = AudioSegment.from_file(temp_mp3_file_path)
+                audio_segment.export(audio_file_path, format="wav")
 
-        audio_cache.add(text_chunk, audio_file_path)
+            audio_cache.add(text_chunk, speed_factor, audio_file_path)
 
-        audio_segment = AudioSegment.from_file(str(audio_file_path))
-
-        try:
-            audio_segment.export(str(audio_file_path), format="wav")
-
-            if speed_factor > 1:
-                adjust_audio_speed(speed_factor, str(audio_file_path))
-
-        except Exception as e:
-            print(f"Error in audio manipulation: {e}")
-            print("Audio too small to trim or speed up")
-
-        wave_obj = sa.WaveObject.from_wave_file(str(audio_file_path))
-        return wave_obj
+    wave_obj = sa.WaveObject.from_wave_file(audio_file_path)
+    return wave_obj
 
 
 def async_audio_generation(
     stop_event: Event,
     text: str,
-    tts_provider: Literal["openai", "edge"] = "edge",
     speaker: Literal["alloy", "echo", "fable", "onyx", "nova", "shimmer"] = "alloy",
     speed_factor: float = 1,
 ) -> None:
@@ -195,6 +113,11 @@ def async_audio_generation(
         stop_event: An event to signal stopping the audio generation.
     """
     text_chunks = sent_tokenize(text)
+    # remove items with only whitespace or full stops
+    text_chunks = [
+        chunk for chunk in text_chunks if chunk.strip() and chunk.strip() != "."
+    ]
+
     progress_bar = tqdm(total=len(text_chunks), desc="Playing audio")
 
     with futures.ThreadPoolExecutor(max_workers=1) as audio_gen_executor:
@@ -205,9 +128,7 @@ def async_audio_generation(
                     create_audio_segment,
                     chunk,
                     speed_factor,
-                    False,
                     speaker,
-                    tts_provider,
                 ),
                 chunk,
             )
@@ -231,6 +152,5 @@ def async_audio_generation(
                     progress_bar.update(len(text_chunks) - index)
                     progress_bar.close()
                     break
-                time.sleep(0.1)
             progress_bar.update(1)
         progress_bar.close()

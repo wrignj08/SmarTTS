@@ -1,7 +1,0 @@
-{
-    "speed": 2.0,
-    "tts_provider_not_used": "edge",
-    "speaker_not_used": "en-GB-SoniaNeural",
-    "tts_provider": "openai",
-    "speaker": "alloy"
-}
