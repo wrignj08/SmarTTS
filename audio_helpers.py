@@ -2,7 +2,6 @@ import tempfile
 from collections import deque
 from concurrent import futures
 from threading import Event
-from typing import Literal
 
 import librosa
 import pyrubberband
@@ -98,10 +97,25 @@ def create_audio_segment(
     return wave_obj
 
 
+def make_sentences(text: str) -> list[str]:
+    remove_chars = [[";", " "], [".,", " "]]
+    for char in remove_chars:
+        text = text.replace(char[0], char[1])
+
+    text_chunks = sent_tokenize(text)
+    for rm in ["\n", "\r", "\t", ".", " "]:
+        if rm in text_chunks:
+            text_chunks.remove(rm)
+
+    text_chunks = [chunk.strip() for chunk in text_chunks]
+
+    return text_chunks
+
+
 def async_audio_generation(
     stop_event: Event,
     text: str,
-    speaker: Literal["alloy", "echo", "fable", "onyx", "nova", "shimmer"] = "alloy",
+    speaker: str,
     speed_factor: float = 1,
 ) -> None:
     """
@@ -112,13 +126,15 @@ def async_audio_generation(
         speed_factor: Speed factor for the audio.
         stop_event: An event to signal stopping the audio generation.
     """
-    text_chunks = sent_tokenize(text)
-    # remove items with only whitespace or full stops
-    text_chunks = [
-        chunk for chunk in text_chunks if chunk.strip() and chunk.strip() != "."
-    ]
+    text_chunks = make_sentences(text)
 
-    progress_bar = tqdm(total=len(text_chunks), desc="Playing audio")
+    print(text_chunks)
+
+    word_count = 0
+    for chunk in text_chunks:
+        word_count += len(chunk.split())
+
+    progress_bar = tqdm(total=word_count, desc="Playing audio")
 
     with futures.ThreadPoolExecutor(max_workers=1) as audio_gen_executor:
         # Store futures with their index and associated text chunk
@@ -144,13 +160,15 @@ def async_audio_generation(
             audio_obj = future.result()
 
             print(chunk_text)
+            print(len(chunk_text))
             play_obj = audio_obj.play()
 
             while play_obj.is_playing():
                 if stop_event.is_set():
                     play_obj.stop()
-                    progress_bar.update(len(text_chunks) - index)
+                    progress_bar.update(word_count - index)
+                    progress_bar.refresh()
                     progress_bar.close()
                     break
-            progress_bar.update(1)
+            progress_bar.update(len(chunk_text.split()))
         progress_bar.close()

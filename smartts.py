@@ -72,7 +72,7 @@ class AudioController:
             key: The key pressed, which can be of type Key, KeyCode, or None.
         """
         key_code = getattr(key, "vk", None)
-        if key_code != 269025093:  # Key.f9:
+        if key_code != 269025093:
             return
         if self.reading_thread.is_alive():
             print("Stopping audio")
