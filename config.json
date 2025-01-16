@@ -1,5 +1,6 @@
 {
-    "speed": 2.0,
-    "tts_provider": "piper",
-    "speaker": "en_en_US_joe_medium_en_US-joe-medium.onnx"
+    "speed": 1.2,
+    "tts_provider": "kokoro",
+    "speaker": "af",
+    "sentence_pause": 0.5
 }

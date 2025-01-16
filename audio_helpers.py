@@ -1,18 +1,17 @@
 import tempfile
+import time
+import wave
 from collections import deque
 from concurrent import futures
 from threading import Event
 
-import librosa
-import pyrubberband
+import inflect
 import simpleaudio as sa
 import soundfile as sf
 from nltk.tokenize import sent_tokenize
-from pydub import AudioSegment
+from piper import PiperVoice
 from simpleaudio import WaveObject
 from tqdm.auto import tqdm
-from piper import PiperVoice
-import wave
 
 
 class AudioCache:
@@ -38,6 +37,7 @@ def tts_piper(
     speaker: str,
     audio_file_path: str,
     speed_factor: float = 1,
+    engine=None,
 ) -> None:
     with wave.open(audio_file_path, "wb") as wav_file:
         # Set the WAV file parameters
@@ -46,7 +46,6 @@ def tts_piper(
         wav_file.setsampwidth(2)  # 16-bit
         wav_file.setframerate(voice.config.sample_rate)  # Use the model's sample rate
 
-        # Generate audio
         voice.synthesize(
             text=text,
             wav_file=wav_file,
@@ -55,23 +54,30 @@ def tts_piper(
         )
 
 
-def adjust_audio_speed(speed_factor: float, audio_file: str) -> None:
-    """
-    Adjusts the speed of an audio file.
-
-    Args:
-        speed_factor: Factor by which to adjust the speed.
-        audio_file: Path to the audio file to be adjusted.
-    """
-    y, sr = librosa.load(audio_file, sr=None)
-    y_stretched = pyrubberband.time_stretch(y, sr, speed_factor)
-    sf.write(audio_file, y_stretched, sr, format="wav")
+def tts_kokoro(
+    text: str,
+    speaker: str,
+    audio_file_path: str,
+    speed_factor: float = 1,
+    engine=None,
+) -> None:
+    if engine is None:
+        raise ValueError("Kokoro engine is not initialized")
+    samples, sample_rate = engine.create(
+        text,
+        voice=speaker,
+        speed=speed_factor,
+        lang="en-us",
+    )
+    sf.write(audio_file_path, samples, sample_rate)
 
 
 def create_audio_segment(
     text_chunk: str,
     speed_factor: float,
     speaker: str,
+    tts_provider: str,
+    engine=None,
 ) -> WaveObject:
     cached_audio_path = audio_cache.get(text_chunk, speed_factor)
     if cached_audio_path:
@@ -82,14 +88,10 @@ def create_audio_segment(
         ) as temp_file:
             audio_file_path = temp_file.name
 
-            with tempfile.NamedTemporaryFile(
-                delete=False, suffix=".mp3", mode="wb"
-            ) as temp_mp3_file:
-                temp_mp3_file_path = temp_mp3_file.name
-                tts_piper(text_chunk, speaker, temp_mp3_file_path, speed_factor)
-
-                audio_segment = AudioSegment.from_file(temp_mp3_file_path)
-                audio_segment.export(audio_file_path, format="wav")
+            if tts_provider == "piper":
+                tts_piper(text_chunk, speaker, audio_file_path, speed_factor)
+            elif tts_provider == "kokoro":
+                tts_kokoro(text_chunk, speaker, audio_file_path, speed_factor, engine)
 
             audio_cache.add(text_chunk, speed_factor, audio_file_path)
 
@@ -97,7 +99,18 @@ def create_audio_segment(
     return wave_obj
 
 
+def replace_long_numbers(text: str) -> str:
+    p = inflect.engine()
+    words = text.split()
+    for i, word in enumerate(words):
+        if word.isdigit() and len(word) > 3:
+            words[i] = p.number_to_words(word)  # type: ignore
+    return " ".join(words)
+
+
 def make_sentences(text: str) -> list[str]:
+    text = replace_long_numbers(text)
+
     remove_chars = [[";", " "], [".,", " "]]
     for char in remove_chars:
         text = text.replace(char[0], char[1])
@@ -117,6 +130,9 @@ def async_audio_generation(
     text: str,
     speaker: str,
     speed_factor: float = 1,
+    tts_provider: str = "piper",
+    engine=None,
+    sentence_pause: float = 0.3,
 ) -> None:
     """
     Asynchronously generates and plays audio from text.
@@ -145,6 +161,8 @@ def async_audio_generation(
                     chunk,
                     speed_factor,
                     speaker,
+                    tts_provider,
+                    engine,
                 ),
                 chunk,
             )
@@ -157,10 +175,18 @@ def async_audio_generation(
                 break
 
             future, chunk_text = indexed_futures[index]
+
+            if stop_event.is_set():
+                break
             audio_obj = future.result()
+
+            if stop_event.is_set():
+                break
 
             print(chunk_text)
             print(len(chunk_text))
+            if index > 0:
+                time.sleep(sentence_pause)
             play_obj = audio_obj.play()
 
             while play_obj.is_playing():
