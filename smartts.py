@@ -1,17 +1,19 @@
+import argparse
 import json
+import logging
 import threading
 import time
 from pathlib import Path
 from threading import Event
 from typing import Union
 
-import emoji
 import pyautogui
 import pyperclip
 from kokoro_onnx import Kokoro
 from pynput.keyboard import Key, KeyCode, Listener
+from tqdm.auto import tqdm
 
-from audio_helpers import async_audio_generation
+from audio_helpers import FAILED_TO_COPY_TEXT, async_audio_generation
 
 
 def copy_selected_text() -> str:
@@ -28,7 +30,7 @@ def copy_selected_text() -> str:
     pyperclip.copy(empty_clipboard)
     time.sleep(0.03)
     # copy the selected text to the clipboard
-    pyautogui.hotkey("ctrl", "c", interval=0.1)
+    pyautogui.hotkey("ctrl", "c", interval=0.05)
     # wait for the clipboard to be filled
     for i in range(2):
         clip_board = pyperclip.paste()
@@ -39,8 +41,7 @@ def copy_selected_text() -> str:
         time.sleep(0.1)
     # refill the clipboard with the original content
     pyperclip.copy(current_clipboard)
-    print("Failed to copy text")
-    return empty_clipboard
+    return FAILED_TO_COPY_TEXT
 
 
 def check_inputs(
@@ -48,7 +49,8 @@ def check_inputs(
 ) -> None:
     if tts_provider not in ["piper", "kokoro"]:
         raise ValueError("tts_provider must be either 'piper' or 'kokoro'")
-    print(f"Using {tts_provider} TTS provider")
+    logging.info(f"Using {tts_provider} TTS provider")
+
     if tts_provider == "piper":
         assert (Path.cwd() / speaker).exists(), f"Speaker file {speaker} does not exist"
 
@@ -56,21 +58,21 @@ def check_inputs(
         assert (
             speaker in json.load(open("voices.json")).keys()
         ), f"Speaker {speaker} not found"
-        print(
+        logging.info(
             f'Other speakers available: {", ".join(json.load(open("voices.json")).keys())}'
         )
 
-    print(f"Using voice {speaker}")
+    logging.info(f"Using speaker {speaker}")
 
     if sentence_pause < 0:
         raise ValueError("sentence_pause must be greater than or equal to 0")
 
-    print(f"Using sentence pause {sentence_pause}")
+    logging.info(f"Using sentence pause {sentence_pause}")
 
     if speed_factor <= 0:
         raise ValueError("speed_factor must be greater than 0")
     else:
-        print(f"Using speed factor {speed_factor}")
+        logging.info(f"Using speed factor {speed_factor}")
 
 
 class AudioController:
@@ -102,25 +104,21 @@ class AudioController:
             key: The key pressed, which can be of type Key, KeyCode, or None.
         """
         key_code = getattr(key, "vk", None)
-
         copy_then_read_key = 269025093
         read_from_clipboard_key = 269025094
-
         if key_code not in [copy_then_read_key, read_from_clipboard_key]:
             return
-        if key_code == read_from_clipboard_key:
-            from_clipboard = True
-        else:
-            from_clipboard = False
+
+        from_clipboard = key_code == read_from_clipboard_key
 
         if self.reading_thread.is_alive():
-            print("Stopping audio")
+            logging.info("Stopping audio")
             self.stop_audio_event.set()
             self.reading_thread.join()
             self.stop_audio_event.clear()
 
         else:
-            print("Starting audio")
+            logging.info("Starting audio")
             self.reading_thread = self.start_reading(
                 self.stop_audio_event, from_clipboard
             )
@@ -141,14 +139,6 @@ class AudioController:
             selected_text = pyperclip.paste()
         else:
             selected_text = copy_selected_text()
-        # convert emojis to text
-        selected_text = emoji.demojize(selected_text)
-        replaces = [":", ";", "\n", "\t"]
-        for replace in replaces:
-
-            selected_text = selected_text.replace(replace, " ")
-        # remove multiple spaces
-        selected_text = " ".join(selected_text.split())
 
         reading_thread = threading.Thread(
             target=async_audio_generation,
@@ -165,7 +155,37 @@ class AudioController:
         return reading_thread
 
 
+def setup_logging(show_info: bool):
+    """Configure logging based on verbose flag"""
+    if show_info:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+    else:
+        logging.basicConfig(
+            level=logging.WARNING  # Only show warnings and errors by default
+        )
+
+
+def parse_arguments():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(description="Text-to-Speech Controller")
+    parser.add_argument("--verbose", action="store_true", help="Show info logs")
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
+    args = parse_arguments()
+
+    # Setup logging
+    setup_logging(args.verbose)
+    logger = logging.getLogger(__name__)
+
+    logger.info("Starting application")
+
+    tqdm_setup_bar = tqdm(total=2, position=0, leave=True, desc="Loading config")
     with open("config.json", "r") as file:
         settings = json.load(file)
 
@@ -173,11 +193,15 @@ if __name__ == "__main__":
     speaker = settings.get("speaker", "en_en_US_joe_medium_en_US-joe-medium.onnx")
     tts_provider = settings.get("tts_provider", "piper")
     sentence_pause = settings.get("sentence_pause", 0.3)
+
     check_inputs(speed, speaker, tts_provider, sentence_pause)
+
     if tts_provider == "kokoro":
         engine = Kokoro("kokoro-v0_19.onnx", "voices.json")
     else:
         engine = None
+    tqdm_setup_bar.update(1)
+    tqdm_setup_bar.set_description("Setting up audio controller")
 
     audio_controller = AudioController(
         speaker=speaker,
@@ -186,6 +210,11 @@ if __name__ == "__main__":
         engine=engine,
         sentence_pause=sentence_pause,
     )
+
+    tqdm_setup_bar.update(1)
+    tqdm_setup_bar.set_description("Ready to read")
+    tqdm_setup_bar.refresh()
+    tqdm_setup_bar.close()
 
     with Listener(on_press=audio_controller.start_stopper) as listener:
         listener.join()
