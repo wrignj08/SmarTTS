@@ -49,23 +49,14 @@ def copy_selected_text() -> str | None:
     return None
 
 
-def check_inputs(
-    speed_factor: float, speaker: str, tts_provider: str, sentence_pause: float
-) -> None:
-    if tts_provider not in ["piper", "kokoro"]:
-        raise ValueError("tts_provider must be either 'piper' or 'kokoro'")
-    logging.info(f"Using {tts_provider} TTS provider")
+def check_inputs(speed_factor: float, speaker: str, sentence_pause: float) -> None:
 
-    if tts_provider == "piper":
-        assert (Path.cwd() / speaker).exists(), f"Speaker file {speaker} does not exist"
-
-    else:
-        assert (
-            speaker in json.load(open("voices.json")).keys()
-        ), f"Speaker {speaker} not found"
-        logging.info(
-            f'Other speakers available: {", ".join(json.load(open("voices.json")).keys())}'
-        )
+    assert (
+        speaker in json.load(open("voices.json")).keys()
+    ), f"Speaker {speaker} not found"
+    logging.info(
+        f'Other speakers available: {", ".join(json.load(open("voices.json")).keys())}'
+    )
 
     logging.info(f"Using speaker {speaker}")
 
@@ -90,14 +81,12 @@ class AudioController:
         copy_then_read_key_code: int,
         speaker: str = "en_en_US_joe_medium_en_US-joe-medium.onnx",
         speed: float = 1.0,
-        tts_provider: str = "piper",
         engine=None,
         sentence_pause: float = 0.3,
     ):
         self.copy_then_read_key_code = copy_then_read_key_code
         self.speaker = speaker
         self.speed = speed
-        self.tts_provider = tts_provider
         self.engine = engine
         self.sentence_pause = sentence_pause
         self.reading_thread = threading.Thread()
@@ -140,13 +129,15 @@ class AudioController:
 
         reading_thread = threading.Thread(
             target=async_audio_generation,
-            args=(
-                stop_audio_event,
-                selected_text,
-                self.speaker,
-                self.speed,
-                self.tts_provider,
-                self.engine,
+            kwargs=(
+                {
+                    "stop_event": stop_audio_event,
+                    "text": selected_text,
+                    "speaker": self.speaker,
+                    "speed_factor": self.speed,
+                    "engine": self.engine,
+                    "sentence_pause": self.sentence_pause,
+                }
             ),
         )
         reading_thread.start()
@@ -189,16 +180,13 @@ if __name__ == "__main__":
 
     speed = settings.get("speed", 1.0)
     speaker = settings.get("speaker", "en_en_US_joe_medium_en_US-joe-medium.onnx")
-    tts_provider = settings.get("tts_provider", "piper")
     sentence_pause = settings.get("sentence_pause", 0.3)
     copy_then_read_key_code = settings.get("copy_then_read_key_code")
 
-    check_inputs(speed, speaker, tts_provider, sentence_pause)
+    check_inputs(speed, speaker, sentence_pause)
 
-    if tts_provider == "kokoro":
-        engine = Kokoro("kokoro-v0_19.onnx", "voices.json")
-    else:
-        engine = None
+    engine = Kokoro("kokoro-v0_19.onnx", "voices.json")
+
     tqdm_setup_bar.update(1)
     tqdm_setup_bar.set_description("Setting up audio controller")
 
@@ -206,7 +194,6 @@ if __name__ == "__main__":
         copy_then_read_key_code=copy_then_read_key_code,
         speaker=speaker,
         speed=speed,
-        tts_provider=tts_provider,
         engine=engine,
         sentence_pause=sentence_pause,
     )

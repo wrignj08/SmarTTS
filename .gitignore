@@ -2,3 +2,4 @@ __pycache__/*
 *.ipynb
 *.onnx*
 voices.json
+*old*

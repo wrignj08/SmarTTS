@@ -1,7 +1,6 @@
 {
     "speed": 1.79,
     "speaker": "af",
-    "tts_provider": "kokoro",
     "sentence_pause": 0.5,
     "copy_then_read_key_code": 269025093
 }

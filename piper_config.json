@@ -1,6 +1,0 @@
-{
-    "speed": 2.0,
-    "tts_provider": "piper",
-    "speaker": "en_US-amy-medium.onnx",
-    "sentence_pause": 0.0
-}

@@ -67,7 +67,6 @@ def create_audio_segment(
     text_chunk: str,
     speed_factor: float,
     speaker: str,
-    tts_provider: str,
     engine,
     audio_generation_bar: tqdm,
 ) -> WaveObject | None:
@@ -83,8 +82,7 @@ def create_audio_segment(
         ) as temp_file:
             audio_file_path = temp_file.name
 
-            if tts_provider == "kokoro":
-                tts_kokoro(text_chunk, speaker, audio_file_path, speed_factor, engine)
+            tts_kokoro(text_chunk, speaker, audio_file_path, speed_factor, engine)
 
             audio_cache.add(text_chunk, speed_factor, audio_file_path)
     if stop_event.is_set():
@@ -148,7 +146,6 @@ def async_audio_generation(
     text: str,
     speaker: str,
     speed_factor: float = 1,
-    tts_provider: str = "piper",
     engine=None,
     sentence_pause: float = 0.3,
 ) -> None:
@@ -190,7 +187,6 @@ def async_audio_generation(
                     chunk,
                     speed_factor,
                     speaker,
-                    tts_provider,
                     engine,
                     audio_generation_bar,
                 ),
