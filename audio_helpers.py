@@ -1,25 +1,22 @@
 import logging
 import tempfile
 import time
-import wave
 from collections import deque
 from concurrent import futures
 from threading import Event
 
 import simpleaudio as sa
 import soundfile as sf
-from nltk.tokenize import sent_tokenize
-from piper import PiperVoice
 from simpleaudio import WaveObject
 from tqdm.auto import tqdm
 
-from text_cleaning import combined_text_cleaning
+from text_cleaning import (
+    combine_short_sentences,
+    combined_text_cleaning,
+    make_sentences,
+)
 
 logging.getLogger("phonemizer").setLevel(logging.ERROR)
-
-FAILED_TO_COPY_TEXT = "Sorry, I failed to copy that text"
-
-STATIC_CACHE_STRING = [FAILED_TO_COPY_TEXT]
 
 
 class AudioCache:
@@ -45,27 +42,6 @@ class AudioCache:
 
 
 audio_cache = AudioCache(max_size=20)
-
-
-def tts_piper(
-    text: str,
-    speaker: str,
-    audio_file_path: str,
-    speed_factor: float = 1,
-) -> None:
-    with wave.open(audio_file_path, "wb") as wav_file:
-
-        voice = PiperVoice.load(speaker)
-        wav_file.setnchannels(1)  # mono
-        wav_file.setsampwidth(2)  # 16-bit
-        wav_file.setframerate(voice.config.sample_rate)
-
-        voice.synthesize(
-            text=text,
-            wav_file=wav_file,
-            length_scale=1.0 / speed_factor,
-            sentence_silence=0.3,
-        )
 
 
 def tts_kokoro(
@@ -107,15 +83,10 @@ def create_audio_segment(
         ) as temp_file:
             audio_file_path = temp_file.name
 
-            if tts_provider == "piper":
-                tts_piper(text_chunk, speaker, audio_file_path, speed_factor)
-            elif tts_provider == "kokoro":
+            if tts_provider == "kokoro":
                 tts_kokoro(text_chunk, speaker, audio_file_path, speed_factor, engine)
 
-            if text_chunk in STATIC_CACHE_STRING:
-                audio_cache.add(text_chunk, speed_factor, audio_file_path, static=True)
-            else:
-                audio_cache.add(text_chunk, speed_factor, audio_file_path)
+            audio_cache.add(text_chunk, speed_factor, audio_file_path)
     if stop_event.is_set():
         return
 
@@ -123,18 +94,6 @@ def create_audio_segment(
     audio_generation_bar.update(1)
     audio_generation_bar.refresh()
     return wave_obj
-
-
-def make_sentences(text: str) -> list[str]:
-
-    text_chunks = sent_tokenize(text)
-    for rm in ["\r", "\t", ".", " "]:
-        if rm in text_chunks:
-            text_chunks.remove(rm)
-
-    text_chunks = [chunk.strip() for chunk in text_chunks]
-
-    return text_chunks
 
 
 def read_sentences(
@@ -150,15 +109,11 @@ def read_sentences(
     progress_bar = tqdm(
         total=word_count, desc="Playing audio", unit=" words", leave=False, position=1
     )
-
-    current_sentence = tqdm(total=0, bar_format="{desc}", position=2, leave=False)
-
+    index = 0
     for index in sorted(indexed_futures.keys()):
 
         future, chunk_text = indexed_futures[index]
         logging.info(chunk_text)
-        current_sentence.set_description_str(chunk_text)
-        current_sentence.refresh()
 
         if stop_event.is_set():
             break
@@ -182,13 +137,10 @@ def read_sentences(
                 break
         progress_bar.update(len(chunk_text.split()))
 
-    # Clean up progress bars
+    # Clean up progress bar
     progress_bar.update(word_count - index)
     progress_bar.refresh()
     progress_bar.close()
-
-    current_sentence.refresh()
-    current_sentence.close()
 
 
 def async_audio_generation(
@@ -211,9 +163,12 @@ def async_audio_generation(
     # Remove unwanted characters
     logging.info(f"Input text: {text}")
     text = combined_text_cleaning(text)
+
     logging.info(f"Cleaned text: {text}")
 
     text_chunks = make_sentences(text)
+
+    text_chunks = combine_short_sentences(text_chunks)
 
     logging.info(f"All input text: {text_chunks}")
 
@@ -225,7 +180,7 @@ def async_audio_generation(
         unit=" sentences",
     )
 
-    with futures.ThreadPoolExecutor(max_workers=1) as audio_gen_executor:
+    with futures.ThreadPoolExecutor(max_workers=2) as audio_gen_executor:
         # Store futures with their index and associated text chunk
         indexed_futures = {
             index: (

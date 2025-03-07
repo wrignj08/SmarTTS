@@ -101,8 +101,50 @@ def make_sentences(text: str) -> list[str]:
     return text_chunks
 
 
+def combine_short_sentences(sentences: list[str], max_length: int = 40) -> list[str]:
+
+    if not sentences:
+        return []
+
+    result = []
+    current = sentences[0]
+
+    for next_sentence in sentences[1:]:
+        # Check if combining current and next sentence (plus a space) stays under max_length
+        if len(current) + len(next_sentence) + 1 <= max_length:
+            current = current + " " + next_sentence
+        else:
+            result.append(current)
+            current = next_sentence
+
+    result.append(current)
+
+    return result
+
+
+def reduce_repeated_special_chars(text: str) -> str:
+
+    if not text:
+        return ""
+
+    result = [text[0]]  # Start with first character
+
+    for current_char in text[1:]:
+        prev_char = result[-1]
+
+        # If current char is alphanumeric or a space, always add it
+        if current_char.isalnum() or current_char.isspace():
+            result.append(current_char)
+        # If it's a special char, only add if different from previous or prev was alphanumeric/space
+        elif prev_char.isalnum() or prev_char.isspace() or current_char != prev_char:
+            result.append(current_char)
+
+    return "".join(result)
+
+
 def combined_text_cleaning(text: str) -> str:
     """Remove unwanted characters, replace long numbers with words, and replace emojis with text."""
+    text = reduce_repeated_special_chars(text)
     # Remove unwanted characters
     text = clean_text(text)
 

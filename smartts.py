@@ -7,16 +7,19 @@ from pathlib import Path
 from threading import Event
 from typing import Union
 
+import chime
 import pyautogui
 import pyperclip
 from kokoro_onnx import Kokoro
 from pynput.keyboard import Key, KeyCode, Listener
 from tqdm.auto import tqdm
 
-from audio_helpers import FAILED_TO_COPY_TEXT, async_audio_generation
+from audio_helpers import async_audio_generation
+
+chime.theme("big-sur")
 
 
-def copy_selected_text() -> str:
+def copy_selected_text() -> str | None:
     """
     Copies the currently selected text to the clipboard.
 
@@ -37,11 +40,13 @@ def copy_selected_text() -> str:
         if clip_board != empty_clipboard:
             # refill the clipboard with the original content
             pyperclip.copy(current_clipboard)
+            chime.play_wav(Path("audio_files/start.wav"))
             return clip_board
         time.sleep(0.1)
     # refill the clipboard with the original content
     pyperclip.copy(current_clipboard)
-    return FAILED_TO_COPY_TEXT
+    chime.warning()
+    return None
 
 
 def check_inputs(
@@ -82,12 +87,14 @@ class AudioController:
 
     def __init__(
         self,
-        speaker="en_en_US_joe_medium_en_US-joe-medium.onnx",
-        speed=1.0,
-        tts_provider="piper",
+        copy_then_read_key_code: int,
+        speaker: str = "en_en_US_joe_medium_en_US-joe-medium.onnx",
+        speed: float = 1.0,
+        tts_provider: str = "piper",
         engine=None,
-        sentence_pause=0.3,
+        sentence_pause: float = 0.3,
     ):
+        self.copy_then_read_key_code = copy_then_read_key_code
         self.speaker = speaker
         self.speed = speed
         self.tts_provider = tts_provider
@@ -103,29 +110,21 @@ class AudioController:
         Args:
             key: The key pressed, which can be of type Key, KeyCode, or None.
         """
-        key_code = getattr(key, "vk", None)
-        copy_then_read_key = 269025093
-        read_from_clipboard_key = 269025094
-        if key_code not in [copy_then_read_key, read_from_clipboard_key]:
+        if self.copy_then_read_key_code not in [getattr(key, "vk", None), str(key)]:
             return
-
-        from_clipboard = key_code == read_from_clipboard_key
 
         if self.reading_thread.is_alive():
             logging.info("Stopping audio")
+            chime.play_wav(Path("audio_files/stop.wav"))
             self.stop_audio_event.set()
             self.reading_thread.join()
             self.stop_audio_event.clear()
 
         else:
             logging.info("Starting audio")
-            self.reading_thread = self.start_reading(
-                self.stop_audio_event, from_clipboard
-            )
+            self.reading_thread = self.start_reading(self.stop_audio_event)
 
-    def start_reading(
-        self, stop_audio_event: Event, from_clipboard: bool = False
-    ) -> threading.Thread:
+    def start_reading(self, stop_audio_event: Event) -> threading.Thread:
         """
         Starts a new thread for reading aloud the selected text.
 
@@ -135,10 +134,9 @@ class AudioController:
         Returns:
             The thread that was started for reading.
         """
-        if from_clipboard:
-            selected_text = pyperclip.paste()
-        else:
-            selected_text = copy_selected_text()
+        selected_text = copy_selected_text()
+        if selected_text is None:
+            return threading.Thread()
 
         reading_thread = threading.Thread(
             target=async_audio_generation,
@@ -193,6 +191,7 @@ if __name__ == "__main__":
     speaker = settings.get("speaker", "en_en_US_joe_medium_en_US-joe-medium.onnx")
     tts_provider = settings.get("tts_provider", "piper")
     sentence_pause = settings.get("sentence_pause", 0.3)
+    copy_then_read_key_code = settings.get("copy_then_read_key_code")
 
     check_inputs(speed, speaker, tts_provider, sentence_pause)
 
@@ -204,6 +203,7 @@ if __name__ == "__main__":
     tqdm_setup_bar.set_description("Setting up audio controller")
 
     audio_controller = AudioController(
+        copy_then_read_key_code=copy_then_read_key_code,
         speaker=speaker,
         speed=speed,
         tts_provider=tts_provider,
